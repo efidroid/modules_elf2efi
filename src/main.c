@@ -15,6 +15,7 @@
 typedef struct {
     Elf32_Word num_relocs;
     Elf32_Addr got_address;
+    Elf32_Word got_size;
 } efi_relocation_hdr_t;
 
 typedef struct {
@@ -97,6 +98,7 @@ static int parse_elf(const char *filename) {
         const char *secname = (void*)(shstrtab) + shdr->sh_name;
         if(!strcmp(secname, ".got")) {
             elochdr.got_address = shdr->sh_addr;
+            elochdr.got_size = shdr->sh_size;
             break;
         }
     }
@@ -166,15 +168,9 @@ static int parse_elf(const char *filename) {
                 case R_ARM_PREL31:
                 case R_ARM_REL32:
                 case R_ARM_GOTPC:
+                case R_ARM_GOT32:
                     // these are PC-relative
                     break;
-
-                case R_ARM_GOT32:
-                    if (elochdr.got_address==0) {
-                        fprintf(stderr, "found GOT relocation(%d) but didn't find .got table\n", type);
-                        return -1;
-                    }
-                    __attribute__ ((fallthrough));
 
                 case R_ARM_ABS32:
                 case R_ARM_TARGET1:
