@@ -16,6 +16,9 @@ typedef struct {
     Elf32_Word num_relocs;
     Elf32_Addr got_address;
     Elf32_Word got_size;
+
+    Elf32_Addr text_base;
+    Elf32_Word text_size;
 } efi_relocation_hdr_t;
 
 typedef struct {
@@ -265,7 +268,6 @@ static int write_efi(const char *filename) {
     secHdrText.PointerToRawData = secHdrText.VirtualAddress;
     secHdrText.Characteristics = EFI_IMAGE_SCN_CNT_CODE
             | EFI_IMAGE_SCN_MEM_EXECUTE
-            | EFI_IMAGE_SCN_MEM_WRITE
             | EFI_IMAGE_SCN_MEM_READ;
 
     memset(&secHdrData, 0, sizeof(secHdrData));
@@ -333,6 +335,9 @@ static int write_efi(const char *filename) {
     write(fd, &secHdrData, sizeof(secHdrData));
 
     // esr
+    elochdr.text_base = phdr_text->p_vaddr;
+    elochdr.text_size = secHdrText.Misc.VirtualSize;
+
     lseek(fd, secHdrESR.PointerToRawData, SEEK_SET);
     write(fd, &elochdr, sizeof(efi_relocation_hdr_t));
     write(fd, efirelocs, elochdr.num_relocs * sizeof(efi_relocation_t));
