@@ -306,8 +306,8 @@ static int write_efi(const char *filename) {
       | EFI_IMAGE_FILE_LOCAL_SYMS_STRIPPED
       | EFI_IMAGE_FILE_32BIT_MACHINE;
 
-    ntHdr.Pe32.OptionalHeader.SizeOfCode = coff_align(phdr_text->p_memsz);
-    ntHdr.Pe32.OptionalHeader.SizeOfInitializedData = coff_align(phdr_data->p_memsz);
+    ntHdr.Pe32.OptionalHeader.SizeOfCode = secHdrText.Misc.VirtualSize;
+    ntHdr.Pe32.OptionalHeader.SizeOfInitializedData = secHdrData.Misc.VirtualSize;
     ntHdr.Pe32.OptionalHeader.SizeOfUninitializedData = 0;
     ntHdr.Pe32.OptionalHeader.AddressOfEntryPoint = g_ehdr->e_entry + loading_offset;
 
