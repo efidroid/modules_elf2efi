@@ -10,5 +10,7 @@ include_directories(
 
 add_executable(elf2efi
     src/main.c
+    src/arch_32.c
+    src/arch_64.c
     src/util.c
 )
