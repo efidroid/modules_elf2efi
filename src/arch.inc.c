@@ -124,12 +124,12 @@ static int parse_reloc(int secidx, int relidx, Elf_Shdr *symshdr, Elf_Shdr *dsts
 
             case R_X86_64_PC32:
             case R_X86_64_PLT32:
+            case R_X86_64_GOTPCREL:
+            case R_X86_64_REX_GOTPCRELX:
                 // these are PC-relative
                 break;
 
-            case R_X86_64_64:
-            case R_X86_64_32:
-            case R_X86_64_32S: {
+            case R_X86_64_64: {
                 needs_reloc = 1;
                 break;
             }
