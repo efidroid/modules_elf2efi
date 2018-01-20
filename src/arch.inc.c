@@ -325,24 +325,12 @@ static int write_efi(const char *filename) {
     off_t table_offset = sizeof(EFI_IMAGE_DOS_HEADER) + 0x40 + sizeof (EFI_IMAGE_NT_HEADERS);
     size_t table_size = 3 * sizeof(EFI_IMAGE_SECTION_HEADER);
 
-    off_t selfreloc_offset = MAX(coff_align(table_offset + table_size), coff_alignment);
-    size_t selfreloc_size = sizeof(efi_relocation_hdr_t) + elochdr.num_relocs * sizeof(efi_relocation_t);
-
-    Elf_Addr text_address = coff_align(selfreloc_offset + selfreloc_size);
+    Elf_Addr text_address = MAX(coff_align(table_offset + table_size), coff_alignment);
     off_t loading_offset = text_address - phdr_text->p_vaddr;
 
     Elf_Addr data_addr_real = phdr_data->p_vaddr + loading_offset;
     Elf_Addr data_addr_rounded = ROUNDDOWN(data_addr_real, coff_alignment);
     Elf_Addr data_addr_diff = data_addr_real - data_addr_rounded;
-
-    memset(&secHdrESR, 0, sizeof(secHdrESR));
-    strcpy((char *)secHdrESR.Name, "esr");
-    secHdrESR.Misc.VirtualSize = coff_align(selfreloc_size);
-    secHdrESR.VirtualAddress = selfreloc_offset;
-    secHdrESR.SizeOfRawData = coff_align(selfreloc_size);
-    secHdrESR.PointerToRawData = selfreloc_offset;
-    secHdrESR.Characteristics = EFI_IMAGE_SCN_CNT_INITIALIZED_DATA
-            | EFI_IMAGE_SCN_MEM_READ;
 
     memset(&secHdrText, 0, sizeof(secHdrText));
     strcpy((char *)secHdrText.Name, ".text");
@@ -362,6 +350,17 @@ static int write_efi(const char *filename) {
     secHdrData.PointerToRawData = secHdrData.VirtualAddress;
     secHdrData.Characteristics = EFI_IMAGE_SCN_CNT_INITIALIZED_DATA
             | EFI_IMAGE_SCN_MEM_WRITE
+            | EFI_IMAGE_SCN_MEM_READ;
+
+    size_t selfreloc_size = sizeof(efi_relocation_hdr_t) + elochdr.num_relocs * sizeof(efi_relocation_t);
+
+    memset(&secHdrESR, 0, sizeof(secHdrESR));
+    strcpy((char *)secHdrESR.Name, "esr");
+    secHdrESR.Misc.VirtualSize = coff_align(selfreloc_size);
+    secHdrESR.VirtualAddress = secHdrData.VirtualAddress + secHdrData.Misc.VirtualSize;
+    secHdrESR.SizeOfRawData = coff_align(selfreloc_size);
+    secHdrESR.PointerToRawData = secHdrESR.VirtualAddress;
+    secHdrESR.Characteristics = EFI_IMAGE_SCN_CNT_INITIALIZED_DATA
             | EFI_IMAGE_SCN_MEM_READ;
 
     fd = open(filename, O_WRONLY|O_TRUNC|O_CREAT, 0644);
@@ -413,10 +412,10 @@ static int write_efi(const char *filename) {
     ntHdr.Pe32Arch.OptionalHeader.ImageBase = 0;
     ntHdr.Pe32Arch.OptionalHeader.SectionAlignment = coff_alignment;
     ntHdr.Pe32Arch.OptionalHeader.FileAlignment = coff_alignment;
-    ntHdr.Pe32Arch.OptionalHeader.SizeOfImage = coff_align(secHdrData.VirtualAddress + secHdrData.SizeOfRawData);
+    ntHdr.Pe32Arch.OptionalHeader.SizeOfImage = coff_align(secHdrESR.VirtualAddress + secHdrESR.SizeOfRawData);
     ntHdr.Pe32Arch.OptionalHeader.Subsystem = EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION;
 
-    ntHdr.Pe32Arch.OptionalHeader.SizeOfHeaders = secHdrESR.PointerToRawData;
+    ntHdr.Pe32Arch.OptionalHeader.SizeOfHeaders = secHdrText.PointerToRawData;
     ntHdr.Pe32Arch.OptionalHeader.NumberOfRvaAndSizes = EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES;
 
     lseek(fd, 0x40, SEEK_CUR);
@@ -424,17 +423,9 @@ static int write_efi(const char *filename) {
 
     // section headers
     lseek(fd, table_offset, SEEK_SET);
-    write(fd, &secHdrESR, sizeof(secHdrESR));
     write(fd, &secHdrText, sizeof(secHdrText));
     write(fd, &secHdrData, sizeof(secHdrData));
-
-    // esr
-    elochdr.text_base = phdr_text->p_vaddr;
-    elochdr.text_size = secHdrText.Misc.VirtualSize;
-
-    lseek(fd, secHdrESR.PointerToRawData, SEEK_SET);
-    write(fd, &elochdr, sizeof(efi_relocation_hdr_t));
-    write(fd, efirelocs, elochdr.num_relocs * sizeof(efi_relocation_t));
+    write(fd, &secHdrESR, sizeof(secHdrESR));
 
     // .text
     lseek(fd, secHdrText.PointerToRawData, SEEK_SET);
@@ -443,6 +434,14 @@ static int write_efi(const char *filename) {
     // .data
     lseek(fd, secHdrData.PointerToRawData + data_addr_diff, SEEK_SET);
     write(fd, ((void*)g_ehdr) + phdr_data->p_offset, phdr_data->p_filesz);
+
+    // esr
+    elochdr.text_base = phdr_text->p_vaddr;
+    elochdr.text_size = secHdrText.Misc.VirtualSize;
+
+    lseek(fd, secHdrESR.PointerToRawData, SEEK_SET);
+    write(fd, &elochdr, sizeof(efi_relocation_hdr_t));
+    write(fd, efirelocs, elochdr.num_relocs * sizeof(efi_relocation_t));
 
     ftruncate(fd, ntHdr.Pe32Arch.OptionalHeader.SizeOfImage);
     close(fd);
