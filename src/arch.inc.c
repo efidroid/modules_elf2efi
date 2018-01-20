@@ -227,6 +227,19 @@ static int parse_elf(void *buf, size_t bufsz) {
     elf_for_every_section(buf, ehdr, shdr) {
         secidx++;
 
+        if (shdr->sh_type != SHT_REL && shdr->sh_type != SHT_RELA)
+            continue;
+
+        if (shdr->sh_link > ehdr->e_shnum) {
+            fprintf(stderr, "[%d] invalid section %d in sh_link\n", secidx, shdr->sh_link);
+            return -1;
+        }
+
+        if (shdr->sh_info > ehdr->e_shnum) {
+            fprintf(stderr, "[%d] invalid section %d in sh_info\n", secidx, shdr->sh_info);
+            return -1;
+        }
+
         Elf_Shdr *symshdr = buf + ehdr->e_shoff + ehdr->e_shentsize*(shdr->sh_link);
         Elf_Shdr *dstshdr = buf + ehdr->e_shoff + ehdr->e_shentsize*(shdr->sh_info);
 
