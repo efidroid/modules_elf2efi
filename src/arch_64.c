@@ -3,6 +3,7 @@
 typedef Elf64_Ehdr Elf_Ehdr;
 typedef Elf64_Shdr Elf_Shdr;
 typedef Elf64_Phdr Elf_Phdr;
+typedef Elf64_Dyn  Elf_Dyn;
 typedef Elf64_Rela Elf_Rela;
 typedef Elf64_Rel  Elf_Rel;
 typedef Elf64_Addr Elf_Addr;

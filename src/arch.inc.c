@@ -63,12 +63,14 @@ static int parse_reloc(int secidx, int relidx, Elf_Shdr *symshdr, Elf_Shdr *dsts
                        Elf_Addr r_offset, Elf_Addr symoffset, Elf_Xword type, Elf_Sxword r_addend
            )
 {
-    if (symoffset > (symshdr->sh_size / sizeof(Elf_Sym))) {
+    Elf_Sym *sym = NULL;
+
+    if (symshdr && symoffset > (symshdr->sh_size / sizeof(Elf_Sym))) {
         fprintf(stderr, "[%d][%d] Invalid symbol offset\n", secidx, relidx);
         return -EINVAL;
     }
 
-    if (r_offset - dstshdr->sh_addr > dstshdr->sh_size - sizeof(Elf_Word)) {
+    if (dstshdr && r_offset - dstshdr->sh_addr > dstshdr->sh_size - sizeof(Elf_Word)) {
         int64_t woffset = (int64_t)(r_offset) - dstshdr->sh_addr - dstshdr->sh_size;
         fprintf(stderr, "[%d][%d] type=%"PRIu64" Invalid relocation offset: 0x%08"PRIx64" (%"PRId64") off=%08"PRIx64" shaddr=%08"PRIx64" shsz=%08"PRIx64"\n",
             secidx, relidx, type, woffset, woffset,
@@ -76,9 +78,11 @@ static int parse_reloc(int secidx, int relidx, Elf_Shdr *symshdr, Elf_Shdr *dsts
         return 0;
     }
 
-    Elf_Sym *sym = ((Elf_Sym*)(((void*)g_ehdr) + symshdr->sh_offset)) + symoffset;
-    if(sym->st_shndx == SHN_UNDEF) {
-        return 0;
+    if (symshdr) {
+        sym = ((Elf_Sym*)(((void*)g_ehdr) + symshdr->sh_offset)) + symoffset;
+        if(sym->st_shndx == SHN_UNDEF) {
+            return 0;
+        }
     }
 
     int needs_reloc = 0;
@@ -123,14 +127,11 @@ static int parse_reloc(int secidx, int relidx, Elf_Shdr *symshdr, Elf_Shdr *dsts
                 // nothing to do
                 break;
 
-            case R_X86_64_PC32:
-            case R_X86_64_PLT32:
-            case R_X86_64_GOTPCREL:
-            case R_X86_64_REX_GOTPCRELX:
-                // these are PC-relative
+            case R_X86_64_GLOB_DAT:
+                fprintf(stderr, "ignore R_X86_64_GLOB_DAT\n");
                 break;
 
-            case R_X86_64_64: {
+            case R_X86_64_RELATIVE: {
                 needs_reloc = 1;
                 break;
             }
@@ -141,12 +142,17 @@ static int parse_reloc(int secidx, int relidx, Elf_Shdr *symshdr, Elf_Shdr *dsts
         }
     }
 
+    else {
+        assert(0);
+    }
+
     if (needs_reloc) {
         efi_relocation_t *efirel = create_efireloc();
         assert(efirel);
         efirel->address = r_offset;
         efirel->type = type;
-        efirel->sym_value = sym->st_value + r_addend;
+        if (sym)
+            efirel->sym_value = sym->st_value + r_addend;
     }
 
     return 0;
@@ -156,6 +162,7 @@ static int parse_elf(void *buf, size_t bufsz) {
     Elf_Ehdr *ehdr;
     Elf_Shdr *shdr;
     Elf_Phdr *phdr;
+    Elf_Dyn *dyn = NULL;
 
     (void)(bufsz);
 
@@ -175,25 +182,28 @@ static int parse_elf(void *buf, size_t bufsz) {
     }
 
     elf_for_every_phdr(buf, ehdr, phdr) {
-        if (phdr->p_type != PT_LOAD)
-            continue;
+        if (phdr->p_type == PT_LOAD) {
+            if ((phdr->p_flags & (PF_R|PF_X)) == (PF_R|PF_X)) {
+                assert(phdr_text==NULL);
+                phdr_text = phdr;
+            }
 
-        if ((phdr->p_flags & (PF_R|PF_X)) == (PF_R|PF_X)) {
-            assert(phdr_text==NULL);
-            phdr_text = phdr;
+            else if ((phdr->p_flags & (PF_R|PF_W)) == (PF_R|PF_W)) {
+                assert(phdr_data==NULL);
+                phdr_data = phdr;
+            }
+
+            else {
+                assert(0);
+            }
+
+            if (phdr->p_align > coff_alignment)
+                coff_alignment = phdr->p_align;
         }
 
-        else if ((phdr->p_flags & (PF_R|PF_W)) == (PF_R|PF_W)) {
-            assert(phdr_data==NULL);
-            phdr_data = phdr;
+        else if (phdr->p_type == PT_DYNAMIC) {
+            dyn = ((void*)ehdr) + phdr->p_offset;
         }
-
-        else {
-            assert(0);
-        }
-
-        if (phdr->p_align > coff_alignment)
-            coff_alignment = phdr->p_align;
     }
 
     if (!phdr_text || !phdr_data) {
@@ -224,86 +234,169 @@ static int parse_elf(void *buf, size_t bufsz) {
         return -EINVAL;
     }
 
-    int secidx = -1;
-    elf_for_every_section(buf, ehdr, shdr) {
-        secidx++;
+    if (ehdr->e_type == ET_EXEC) {
+        int secidx = -1;
+        elf_for_every_section(buf, ehdr, shdr) {
+            secidx++;
 
-        if (shdr->sh_type != SHT_REL && shdr->sh_type != SHT_RELA)
-            continue;
+            if (shdr->sh_type != SHT_REL && shdr->sh_type != SHT_RELA)
+                continue;
 
-        if (shdr->sh_link > ehdr->e_shnum) {
-            fprintf(stderr, "[%d] invalid section %d in sh_link\n", secidx, shdr->sh_link);
+            if (shdr->sh_link > ehdr->e_shnum) {
+                fprintf(stderr, "[%d] invalid section %d in sh_link\n", secidx, shdr->sh_link);
+                return -1;
+            }
+
+            if (shdr->sh_info > ehdr->e_shnum) {
+                fprintf(stderr, "[%d] invalid section %d in sh_info\n", secidx, shdr->sh_info);
+                return -1;
+            }
+
+            Elf_Shdr *symshdr = buf + ehdr->e_shoff + ehdr->e_shentsize*(shdr->sh_link);
+            Elf_Shdr *dstshdr = buf + ehdr->e_shoff + ehdr->e_shentsize*(shdr->sh_info);
+
+            if (!(dstshdr->sh_flags & SHF_ALLOC))
+                continue;
+
+            if (shdr->sh_type == SHT_REL) {
+                Elf_Rel *rel;
+                int relidx = -1;
+                elf_for_every_relocation(buf, shdr, rel) {
+                    relidx++;
+                    Elf_Addr r_offset = rel->r_offset;
+                    Elf_Addr symoffset = ELF_R_SYM(rel->r_info);
+                    Elf_Xword type = ELF_R_TYPE(rel->r_info);
+
+                    int rc = parse_reloc(secidx, relidx, symshdr, dstshdr, r_offset, symoffset, type, 0);
+                    if (rc)
+                        return rc;
+                }
+            }
+
+            else if (shdr->sh_type == SHT_RELA) {
+                Elf_Rela *rela;
+                int relidx = -1;
+                elf_for_every_relocation(buf, shdr, rela) {
+                    relidx++;
+                    Elf_Addr r_offset = rela->r_offset;
+                    Elf_Addr symoffset = ELF_R_SYM(rela->r_info);
+                    Elf_Xword type = ELF_R_TYPE(rela->r_info);
+                    Elf_Sxword r_addend =  rela->r_addend;
+
+                    int rc = parse_reloc(secidx, relidx, symshdr, dstshdr, r_offset, symoffset, type, r_addend);
+                    if (rc)
+                        return rc;
+                }
+            }
+        }
+
+        if (g_machine == EM_ARM) {
+            // GCC doesn't emit relocations for these so generate them ourselves
+            elf_for_every_section(buf, ehdr, shdr) {
+                if (shdr->sh_type == SHT_SYMTAB) {
+                    Elf_Sym *symtab = (Elf_Sym*)(buf + shdr->sh_offset);
+
+                    Elf_Sym *sym;
+                    for(
+                        sym = symtab;
+                        (void*)sym < ((void*)symtab) + shdr->sh_size;
+                        sym = ((void*)sym) + shdr->sh_entsize
+                        )
+                    {
+                        const char *symname = strtab + sym->st_name;
+
+                        if (ends_with(symname, "_from_arm")) {
+                            efi_relocation_t *efirel = create_efireloc();
+                            assert(efirel);
+                            efirel->address = sym->st_value + 4;
+                            efirel->type = R_ARM_ABS32;
+                            efirel->sym_value = sym->st_value;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    else if (ehdr->e_type == ET_DYN) {
+        if (!dyn) {
+            fprintf(stderr, "dynamic section not found\n");
             return -1;
         }
 
-        if (shdr->sh_info > ehdr->e_shnum) {
-            fprintf(stderr, "[%d] invalid section %d in sh_info\n", secidx, shdr->sh_info);
-            return -1;
+        size_t i;
+        Elf_Xword dt_relsz = 0;
+        Elf_Xword dt_relent = 0;
+        Elf_Rel *dt_rel = 0;
+        Elf_Xword dt_relasz = 0;
+        Elf_Xword dt_relaent = 0;
+        Elf_Rela *dt_rela = 0;
+        for (i=0; dyn[i].d_tag!=DT_NULL; i++) {
+            switch (dyn[i].d_tag) {
+                case DT_REL:
+                    dt_rel = (((void*)g_ehdr) + dyn[i].d_un.d_ptr);
+                    break;
+
+                case DT_RELSZ:
+                    dt_relsz = dyn[i].d_un.d_val;
+                    break;
+
+                case DT_RELENT:
+                    dt_relent = dyn[i].d_un.d_val;
+                    break;
+
+                case DT_RELA:
+                    dt_rela = (((void*)g_ehdr) + dyn[i].d_un.d_ptr);
+                    break;
+
+                case DT_RELASZ:
+                    dt_relasz = dyn[i].d_un.d_val;
+                    break;
+
+                case DT_RELAENT:
+                    dt_relaent = dyn[i].d_un.d_val;
+                    break;
+
+                default:
+                    break;
+            }
         }
 
-        Elf_Shdr *symshdr = buf + ehdr->e_shoff + ehdr->e_shentsize*(shdr->sh_link);
-        Elf_Shdr *dstshdr = buf + ehdr->e_shoff + ehdr->e_shentsize*(shdr->sh_info);
-
-        if (!(dstshdr->sh_flags & SHF_ALLOC))
-            continue;
-
-        if (shdr->sh_type == SHT_REL) {
+        if (dt_rel && dt_relsz && dt_relent) {
             Elf_Rel *rel;
             int relidx = -1;
-            elf_for_every_relocation(buf, shdr, rel) {
+            elf_for_every_relocation_dt(dt_rel, dt_relsz, dt_relent, rel) {
                 relidx++;
                 Elf_Addr r_offset = rel->r_offset;
                 Elf_Addr symoffset = ELF_R_SYM(rel->r_info);
                 Elf_Xword type = ELF_R_TYPE(rel->r_info);
 
-                int rc = parse_reloc(secidx, relidx, symshdr, dstshdr, r_offset, symoffset, type, 0);
+                int rc = parse_reloc(-1, relidx, NULL, NULL, r_offset, symoffset, type, 0);
                 if (rc)
                     return rc;
             }
         }
 
-        else if (shdr->sh_type == SHT_RELA) {
+        if (dt_rela && dt_relasz && dt_relaent) {
             Elf_Rela *rela;
             int relidx = -1;
-            elf_for_every_relocation(buf, shdr, rela) {
+            elf_for_every_relocation_dt(dt_rela, dt_relasz, dt_relaent, rela) {
                 relidx++;
                 Elf_Addr r_offset = rela->r_offset;
                 Elf_Addr symoffset = ELF_R_SYM(rela->r_info);
                 Elf_Xword type = ELF_R_TYPE(rela->r_info);
                 Elf_Sxword r_addend =  rela->r_addend;
 
-                int rc = parse_reloc(secidx, relidx, symshdr, dstshdr, r_offset, symoffset, type, r_addend);
+                int rc = parse_reloc(-1, relidx, NULL, NULL, r_offset, symoffset, type, r_addend);
                 if (rc)
                     return rc;
             }
         }
     }
 
-    if (g_machine == EM_ARM) {
-        // GCC doesn't emit relocations for these so generate them ourselves
-        elf_for_every_section(buf, ehdr, shdr) {
-            if (shdr->sh_type == SHT_SYMTAB) {
-                Elf_Sym *symtab = (Elf_Sym*)(buf + shdr->sh_offset);
-
-                Elf_Sym *sym;
-                for(
-                    sym = symtab;
-                    (void*)sym < ((void*)symtab) + shdr->sh_size;
-                    sym = ((void*)sym) + shdr->sh_entsize
-                    )
-                {
-                    const char *symname = strtab + sym->st_name;
-
-                    if (ends_with(symname, "_from_arm")) {
-                        efi_relocation_t *efirel = create_efireloc();
-                        assert(efirel);
-                        efirel->address = sym->st_value + 4;
-                        efirel->type = R_ARM_ABS32;
-                        efirel->sym_value = sym->st_value;
-                    }
-                }
-            }
-        }
+    else {
+        fprintf(stderr, "invalid elf type\n");
+        return -1;
     }
 
     return 0;

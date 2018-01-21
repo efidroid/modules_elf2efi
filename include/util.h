@@ -24,6 +24,12 @@
          (void*)rel < buf + shdr->sh_offset + shdr->sh_size; \
          rel = ((void*)rel) + shdr->sh_entsize)
 
+#define elf_for_every_relocation_dt(dt_rel, dt_relsz, dt_relent, rel) \
+    for ( \
+         rel = dt_rel; \
+         (void*)rel < ((void*)dt_rel) + dt_relsz; \
+         rel = ((void*)rel) + dt_relent)
+
 off_t fdsize(int fd);
 int file_to_buf(const char* filename, void **out_buf, size_t *out_size);
 int buf_to_file(const char *filename, void *buf, size_t size);
