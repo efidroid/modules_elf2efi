@@ -20,6 +20,7 @@ typedef struct {
     Elf_Word num_relocs;
     Elf_Addr got_address;
     Elf_Word got_size;
+    Elf_Word elf_type;
 
     Elf_Addr text_base;
     Elf_Word text_size;
@@ -438,6 +439,7 @@ static int write_efi(const char *filename) {
     // esr
     elochdr.text_base = phdr_text->p_vaddr;
     elochdr.text_size = secHdrText.Misc.VirtualSize;
+    elochdr.elf_type = g_ehdr->e_type;
 
     lseek(fd, secHdrESR.PointerToRawData, SEEK_SET);
     write(fd, &elochdr, sizeof(efi_relocation_hdr_t));
