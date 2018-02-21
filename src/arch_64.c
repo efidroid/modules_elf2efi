@@ -1,4 +1,4 @@
-#include <elf.h>
+#include <elf-local.h>
 
 typedef Elf64_Ehdr Elf_Ehdr;
 typedef Elf64_Shdr Elf_Shdr;

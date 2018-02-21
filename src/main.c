@@ -6,7 +6,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <elf.h>
+#include <elf-local.h>
 
 #include <Base.h>
 #include <PeImage.h>
