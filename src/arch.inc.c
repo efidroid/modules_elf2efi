@@ -38,7 +38,7 @@ static Elf_Ehdr *g_ehdr = NULL;
 static Elf_Word coff_alignment = 0x20;
 static Elf_Half g_machine;
 
-static efi_relocation_hdr_t elochdr = {0};
+static efi_relocation_hdr_t elochdr;
 static efi_relocation_t *efirelocs = NULL;
 static size_t max_efirelocs = 0;
 
@@ -546,6 +546,8 @@ static int write_efi(const char *filename) {
 
 int FN(do_convert)(void *buf, size_t bufsz, const char *filename_efi) {
     int rc;
+
+    memset(&elochdr, 0, sizeof(elochdr));
 
     rc = parse_elf(buf, bufsz);
     if (rc) {
