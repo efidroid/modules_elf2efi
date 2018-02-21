@@ -2,6 +2,7 @@
 #define UTIL_H
 
 #include <stdlib.h>
+#include <unistd.h>
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define ROUNDDOWN(a, b) ((a) & ~((b)-1))
